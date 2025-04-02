@@ -1,3 +1,3 @@
-# udesk bike connector
+# Connection to respiratory belt
 
-![alt text](https://github.com/bcbergmanuu/bike-ble-connect/blob/master/deskbike-c.jpg?raw=true)
+This application will output the measured voltages induced by movements of the respiratory belt to the console. 
