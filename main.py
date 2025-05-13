@@ -4,63 +4,86 @@ from bleak.backends.characteristic import BleakGATTCharacteristic
 import logging
 import logging
 import struct
-
+#import matplotlib.pyplot as plt
+#import matplotlib.animation as animation
+import random  # Replace this with your real data source
+import datetime as dt
+import threading
+import numpy as np
+import time
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
-UU_RESPIRATORY_UUID =  "84b45e35-140b-4d33-92c6-386d8bff160d" 
+UU_RESPIRATORY_UUID =  "d67b5503-a25c-4395-bd21-f92823d91442" 
+#UU_TRIGGER_UUID = "84b45e35-140a-4d32-92c6-386d8bff160d"
 BATTERY_LEVEL_UUID =    "00002A19-0000-1000-8000-00805f9b34fb"
 
+MAC_SAADC = "DA:88:4A:1C:07:70"
+#MAC_TRIGGERBOX = "FB:41:2A:F4:5E:AA"
 
 class uutrack_reader:
     
     def __init__(self):
         self.CSC = 0
-        self.semaphore = asyncio.Semaphore(0)            
+        self.semaphore = asyncio.Semaphore(0)        
+        self.counter = 0    
+        self.starttime : time
+        
     
-    async def notification_handler(self, sender, data : bytearray):                
-        voltages_encoded = struct.iter_unpack("<I", data)
-        for voltage_encoded in voltages_encoded:            
-            voltage = (voltage_encoded[0]/(1<<23)-1)*(2.5/128)
-            print(f'{voltage}')
-
+    async def notification_handler(self, sender, data : bytearray):
+        if self.counter == 0:
+             self.starttime = time.time()                
+        adc_values = struct.iter_unpack("<h", data)                
+        for adc_value in adc_values:            #12 bit values            
+            #if(self.counter % 100 == 0):            
+            print(f'#: {self.counter:<8}time: {round((time.time() - self.starttime),3):<8} time_est: {self.counter*32:<8} value: {adc_value[0]:<8}')
+            self.counter+=1            
+            if(self.counter > 2500):
+                print("stopping, sample ended")
+                self.semaphore.release()
+                    
     def on_disconnect(self, client):
         print("ble disconnect detected")
         self.semaphore.release()
               
-    async def makeconnectiontodevice(self, device):
-        client = BleakClient(device.address, timeout=30, disconnected_callback=self.on_disconnect)
-        
-        try:
-            await client.connect()
-            print("connected to device")
-            battery_level_byte = await client.read_gatt_char(BATTERY_LEVEL_UUID)
+    async def makeconnectiontodevice(self, address : str, UUID : str, ble_lock : asyncio.Lock):
+        async with ble_lock:
+            client = BleakClient(address, disconnected_callback=self.on_disconnect, timeout=20)
             
-            print(f'battery level {int.from_bytes(battery_level_byte, byteorder="little")}')
-            await client.start_notify(UU_RESPIRATORY_UUID, self.notification_handler)
-            await self.semaphore.acquire()
-                
-        except Exception as e:
-            print(e)
-        finally:
-            await client.disconnect()
-            print(f'disconnected ')
+            try:
+                await client.connect()
+                print("connected to device")
+                await client.start_notify(UUID, self.notification_handler)
+                await self.semaphore.acquire()
+                    
+            except Exception as e:
+                print(e)
+            finally:
+                await client.disconnect()
+                print(f'disconnected ')
     
 
-class datacollector:
+class datacollector:    
+    def __init__(self):
+        self.task_triggerbox : asyncio.Task | None = None        
+        self.ble_lock = asyncio.Lock()
     async def app(self):    
-        print("scanning devices")
-        devices = await BleakScanner.discover()
-        for d in devices:
-            if(d.name == "UU_respiratory"):                            
-                print(f'device found:{d}')                
-                the_reader = uutrack_reader()
-                await the_reader.makeconnectiontodevice(d)
-                
-                    
+        the_reader = uutrack_reader()                
+        await asyncio.create_task(the_reader.makeconnectiontodevice(MAC_SAADC, UU_RESPIRATORY_UUID, self.ble_lock))        
+
+def ble_connect():
+    collectior = datacollector()
+    #asyncio.gather(*())
+    asyncio.run(collectior.app())    
 
 def main(): 
-    collectior = datacollector()
-    asyncio.run(collectior.app())
+    t = threading.Thread(target=ble_connect)
+    t.start()
+    #plotter()
 
-if __name__ == "__main__":
+if __name__ == "__main__":    
     main()
+
+
+
+
